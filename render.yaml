@@ -1,0 +1,15 @@
+services:
+   - type: web
+     name: bottle-game
+     env: python
+     buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+     envVars:
+       - key: PYTHON_VERSION
+         value: 3.12.0
+
+   - type: worker
+     name: bottle-bot
+     env: python
+    buildCommand: pip install -r requirements.txt
+     startCommand: python bot.py
