@@ -4,7 +4,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from httpx import AsyncClient, Proxy
 
 # Токен бота получишь у @BotFather
-BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8455072205:AAE9d7g3ZRxMSWgi3nv3XuoQqh7xiN71nGk")
 
 # URL твоего Mini App (после деплоя на Railway/Render)
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://your-app.railway.app")
