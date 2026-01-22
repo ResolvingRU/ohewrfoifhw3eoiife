@@ -668,4 +668,11 @@ async def ws_endpoint(ws: WebSocket):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+    # Пробуем порты по очереди
+    for port in [8000, 8001, 8002, 8080, 3000]:
+        try:
+            uvicorn.run(app, host="0.0.0.0", port=port)
+            break
+        except OSError:
+            print(f"Порт {port} занят, пробую следующий...")
+            continue
