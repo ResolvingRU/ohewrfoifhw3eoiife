@@ -1,17 +1,14 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import random
-import json
 from datetime import datetime
 from typing import Dict, Set
 import os
 
 app = FastAPI()
 
-# CORS для Telegram
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,7 +18,6 @@ app.add_middleware(
 )
 
 
-# Игровое состояние
 class GameState:
     def __init__(self):
         self.players: Dict[str, dict] = {}
@@ -31,10 +27,12 @@ class GameState:
         self.last_spin = None
         self.cooldown = 5
 
-    def add_player(self, user_id: str, name: str, ws: WebSocket):
+    def add_player(self, user_id: str, name: str, username: str, photo_url: str, ws: WebSocket):
         self.players[user_id] = {
             "id": user_id,
             "name": name,
+            "username": username,
+            "photo": photo_url,
             "ws": ws,
             "kisses": 0,
             "rejects": 0
@@ -64,6 +62,8 @@ class GameState:
             {
                 "id": p["id"],
                 "name": p["name"],
+                "username": p["username"],
+                "photo": p["photo"],
                 "kisses": p["kisses"],
                 "rejects": p["rejects"]
             }
@@ -75,7 +75,6 @@ game = GameState()
 
 
 async def broadcast(msg: dict):
-    """Отправка всем"""
     dead = set()
     for ws in game.connections:
         try:
@@ -86,7 +85,6 @@ async def broadcast(msg: dict):
         game.remove_player(ws)
 
 
-# HTML страница (Mini App)
 HTML = """<!DOCTYPE html>
 <html>
 <head>
@@ -96,142 +94,286 @@ HTML = """<!DOCTYPE html>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
             min-height: 100vh;
             display: flex;
             justify-content: center;
             align-items: center;
+            color: #fff;
             overflow: hidden;
-            color: white;
         }
-        .container { width: 100%; max-width: 500px; padding: 20px; }
+
+        .container { 
+            width: 100%; 
+            max-width: 500px; 
+            padding: 20px; 
+        }
+
         .game-circle {
             position: relative;
             width: 100%;
             aspect-ratio: 1;
-            background: rgba(255,255,255,0.1);
+            background: rgba(255,255,255,0.03);
             border-radius: 50%;
-            backdrop-filter: blur(10px);
-            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            border: 2px solid rgba(255,255,255,0.1);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5),
+                        inset 0 0 50px rgba(255,255,255,0.02);
         }
+
         .bottle {
             position: absolute;
-            top: 50%; left: 50%;
-            width: 50%; height: 6px;
-            background: linear-gradient(90deg, transparent, #fff, transparent);
+            top: 50%; 
+            left: 50%;
+            width: 45%; 
+            height: 4px;
+            background: linear-gradient(90deg, transparent 0%, #00d4ff 30%, #00d4ff 70%, transparent 100%);
             transform-origin: 0% 50%;
             margin-left: 0;
-            margin-top: -3px;
-            filter: drop-shadow(0 0 10px rgba(255,255,255,0.8));
+            margin-top: -2px;
+            filter: drop-shadow(0 0 15px #00d4ff);
             transition: transform 0.1s;
+            border-radius: 2px;
         }
-        .bottle.spin { animation: rotate 3s cubic-bezier(0.25,0.46,0.45,0.94); }
+
+        .bottle::after {
+            content: '';
+            position: absolute;
+            right: -8px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 0;
+            height: 0;
+            border-left: 8px solid #00d4ff;
+            border-top: 4px solid transparent;
+            border-bottom: 4px solid transparent;
+            filter: drop-shadow(0 0 8px #00d4ff);
+        }
+
+        .bottle.spin { 
+            animation: rotate 3s cubic-bezier(0.25,0.46,0.45,0.94); 
+        }
+
         @keyframes rotate {
             from { transform: rotate(0deg); }
             to { transform: rotate(1800deg); }
         }
+
         .players {
             position: absolute;
-            width: 100%; height: 100%;
-            top: 0; left: 0;
+            width: 100%; 
+            height: 100%;
+            top: 0; 
+            left: 0;
         }
+
         .player {
             position: absolute;
-            width: 50px; height: 50px;
-            background: rgba(255,255,255,0.9);
+            width: 60px; 
+            height: 60px;
+            background: rgba(30,30,50,0.8);
+            border: 2px solid rgba(255,255,255,0.2);
             border-radius: 50%;
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
-            font-size: 20px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
             transition: all 0.3s;
+            backdrop-filter: blur(10px);
         }
+
+        .player-avatar {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            object-fit: cover;
+            background: #2a2a3e;
+            border: 2px solid rgba(255,255,255,0.1);
+        }
+
+        .player-name {
+            position: absolute;
+            bottom: -20px;
+            font-size: 11px;
+            color: rgba(255,255,255,0.7);
+            font-weight: 500;
+            white-space: nowrap;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+        }
+
         .player.glow {
-            background: linear-gradient(135deg, #f093fb, #f5576c);
-            transform: scale(1.4);
-            box-shadow: 0 0 30px rgba(245,87,108,0.8);
+            background: linear-gradient(135deg, #ff006e, #8338ec);
+            border-color: #ff006e;
+            transform: scale(1.3);
+            box-shadow: 0 0 40px rgba(255,0,110,0.8);
         }
+
+        .player.glow .player-avatar {
+            border-color: #fff;
+        }
+
         .controls {
             text-align: center;
-            margin-top: 30px;
+            margin-top: 40px;
         }
+
         .btn-spin {
-            padding: 15px 40px;
+            padding: 16px 50px;
             font-size: 18px;
-            background: linear-gradient(135deg, #f093fb, #f5576c);
+            background: linear-gradient(135deg, #00d4ff, #0077ff);
             border: none;
             border-radius: 50px;
             color: white;
             font-weight: 600;
             cursor: pointer;
-            box-shadow: 0 4px 15px rgba(245,87,108,0.4);
+            box-shadow: 0 6px 20px rgba(0,119,255,0.4);
             transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }
+
         .btn-spin:hover:not(:disabled) {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(245,87,108,0.6);
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(0,119,255,0.6);
         }
+
+        .btn-spin:active:not(:disabled) {
+            transform: translateY(-1px);
+        }
+
         .btn-spin:disabled {
-            opacity: 0.5;
+            opacity: 0.4;
             cursor: not-allowed;
+            background: #555;
         }
+
         .status {
-            margin-top: 15px;
+            margin-top: 20px;
             font-size: 14px;
-            color: rgba(255,255,255,0.8);
+            color: rgba(255,255,255,0.6);
+            font-weight: 500;
         }
+
+        .players-count {
+            margin-top: 10px;
+            font-size: 13px;
+            color: rgba(255,255,255,0.5);
+        }
+
         .modal {
             display: none;
             position: fixed;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            background: rgba(0,0,0,0.85);
+            top: 0; 
+            left: 0;
+            width: 100%; 
+            height: 100%;
+            background: rgba(0,0,0,0.9);
             align-items: center;
             justify-content: center;
             z-index: 999;
+            backdrop-filter: blur(10px);
         }
+
         .modal.show { display: flex; }
+
         .modal-box {
-            background: white;
-            padding: 30px;
-            border-radius: 20px;
+            background: linear-gradient(135deg, #1e1e2e, #2a2a3e);
+            padding: 40px;
+            border-radius: 25px;
             text-align: center;
-            color: #333;
+            color: #fff;
             max-width: 90%;
+            border: 1px solid rgba(255,255,255,0.1);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.8);
         }
-        .modal-box h2 { margin-bottom: 20px; }
+
+        .modal-box h2 { 
+            margin-bottom: 25px; 
+            font-size: 24px;
+            background: linear-gradient(135deg, #00d4ff, #ff006e);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
         .modal-players {
             display: flex;
             justify-content: center;
-            gap: 20px;
-            margin: 20px 0;
-            font-size: 40px;
+            align-items: center;
+            gap: 30px;
+            margin: 30px 0;
         }
+
+        .modal-player {
+            text-align: center;
+        }
+
+        .modal-player img {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            border: 3px solid #ff006e;
+            box-shadow: 0 0 30px rgba(255,0,110,0.6);
+            margin-bottom: 10px;
+        }
+
+        .modal-player-name {
+            font-size: 14px;
+            font-weight: 600;
+            color: rgba(255,255,255,0.9);
+        }
+
+        .heart-icon {
+            font-size: 40px;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.2); }
+        }
+
         .modal-btns {
             display: flex;
-            gap: 10px;
+            gap: 15px;
             justify-content: center;
-            margin-top: 20px;
+            margin-top: 30px;
         }
+
         .modal-btn {
-            padding: 12px 30px;
+            padding: 14px 35px;
             border: none;
-            border-radius: 25px;
+            border-radius: 30px;
             font-size: 16px;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
+
         .btn-kiss {
-            background: linear-gradient(135deg, #f093fb, #f5576c);
+            background: linear-gradient(135deg, #ff006e, #ff4d8f);
             color: white;
+            box-shadow: 0 6px 20px rgba(255,0,110,0.4);
         }
+
+        .btn-kiss:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(255,0,110,0.6);
+        }
+
         .btn-no {
-            background: #ddd;
-            color: #666;
+            background: rgba(255,255,255,0.1);
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .btn-no:hover {
+            background: rgba(255,255,255,0.15);
+            transform: translateY(-2px);
         }
     </style>
 </head>
@@ -244,6 +386,7 @@ HTML = """<!DOCTYPE html>
         <div class="controls">
             <button class="btn-spin" id="spinBtn" disabled>Крутить 🍾</button>
             <div class="status" id="status">Подключение...</div>
+            <div class="players-count" id="count">Игроков: 0</div>
         </div>
     </div>
 
@@ -251,10 +394,10 @@ HTML = """<!DOCTYPE html>
         <div class="modal-box">
             <h2>Бутылочка выбрала вас! 💋</h2>
             <div class="modal-players" id="modalPlayers"></div>
-            <p>Хотите поцеловаться?</p>
+            <p style="color: rgba(255,255,255,0.7); margin-top: 20px;">Хотите поцеловаться?</p>
             <div class="modal-btns">
-                <button class="modal-btn btn-kiss" onclick="answer('kiss')">💋 Да</button>
-                <button class="modal-btn btn-no" onclick="answer('reject')">🚫 Нет</button>
+                <button class="modal-btn btn-kiss" onclick="answer('kiss')">💋 Поцеловать</button>
+                <button class="modal-btn btn-no" onclick="answer('reject')">🚫 Отказаться</button>
             </div>
         </div>
     </div>
@@ -266,7 +409,9 @@ HTML = """<!DOCTYPE html>
 
         const user = tg.initDataUnsafe?.user || {
             id: Date.now(),
-            first_name: 'Player'
+            first_name: 'Player',
+            username: 'player',
+            photo_url: ''
         };
 
         let ws;
@@ -279,7 +424,9 @@ HTML = """<!DOCTYPE html>
             ws.onopen = () => {
                 ws.send(JSON.stringify({
                     user_id: myId,
-                    name: user.first_name
+                    name: user.first_name,
+                    username: user.username || 'user',
+                    photo_url: user.photo_url || ''
                 }));
             };
 
@@ -297,7 +444,7 @@ HTML = """<!DOCTYPE html>
                 else if (msg.type === 'spin_start') {
                     document.getElementById('bottle').classList.add('spin');
                     document.getElementById('spinBtn').disabled = true;
-                    setStatus('Крутим...');
+                    setStatus('Бутылочка крутится...');
                 }
                 else if (msg.type === 'spin_result') {
                     setTimeout(() => {
@@ -310,25 +457,25 @@ HTML = """<!DOCTYPE html>
                 }
                 else if (msg.type === 'kiss_accepted') {
                     hideModal();
-                    setStatus('💋 Поцелуй!');
+                    setStatus('💋 Поцелуй состоялся!');
                     clearGlow();
                     drawPlayers(msg.stats);
                 }
                 else if (msg.type === 'kiss_rejected') {
                     hideModal();
-                    setStatus('🚫 Отказ...');
+                    setStatus('🚫 Кто-то отказался...');
                     clearGlow();
                     drawPlayers(msg.stats);
                 }
                 else if (msg.type === 'ready_to_spin') {
                     updateBtn(true);
-                    setStatus('Готово крутить!');
+                    setStatus('Можно крутить снова!');
                 }
             };
 
-            ws.onerror = () => setStatus('Ошибка');
+            ws.onerror = () => setStatus('Ошибка подключения');
             ws.onclose = () => {
-                setStatus('Отключено');
+                setStatus('Переподключение...');
                 setTimeout(connect, 3000);
             };
         }
@@ -336,7 +483,7 @@ HTML = """<!DOCTYPE html>
         function drawPlayers(players) {
             const container = document.getElementById('players');
             container.innerHTML = '';
-            const r = container.offsetWidth / 2 - 35;
+            const r = container.offsetWidth / 2 - 40;
             const step = (2 * Math.PI) / players.length;
 
             players.forEach((p, i) => {
@@ -349,10 +496,22 @@ HTML = """<!DOCTYPE html>
                 div.id = 'p-' + p.id;
                 div.style.left = x + 'px';
                 div.style.top = y + 'px';
-                div.textContent = p.name[0].toUpperCase();
+
+                const avatar = document.createElement('img');
+                avatar.className = 'player-avatar';
+                avatar.src = p.photo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.name)}&background=2a2a3e&color=fff&size=45`;
+                avatar.alt = p.name;
+
+                const name = document.createElement('div');
+                name.className = 'player-name';
+                name.textContent = p.username ? '@' + p.username : p.name;
+
+                div.appendChild(avatar);
+                div.appendChild(name);
                 container.appendChild(div);
             });
 
+            document.getElementById('count').textContent = `Игроков: ${players.length}`;
             updateBtn(players.length >= 2);
         }
 
@@ -370,8 +529,14 @@ HTML = """<!DOCTYPE html>
         }
 
         function showModal(players) {
-            document.getElementById('modalPlayers').innerHTML = 
-                players.map(p => p.name[0].toUpperCase()).join(' 💋 ');
+            const container = document.getElementById('modalPlayers');
+            container.innerHTML = players.map(p => `
+                <div class="modal-player">
+                    <img src="${p.photo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.name)}&background=ff006e&color=fff&size=80`}" alt="${p.name}">
+                    <div class="modal-player-name">${p.username ? '@' + p.username : p.name}</div>
+                </div>
+            `).join('<div class="heart-icon">💋</div>');
+
             document.getElementById('modal').classList.add('show');
         }
 
@@ -411,27 +576,25 @@ async def ws_endpoint(ws: WebSocket):
     await ws.accept()
 
     try:
-        # Авторизация
         auth = await ws.receive_json()
         user_id = auth.get("user_id", str(random.randint(1000, 9999)))
         name = auth.get("name", "Player")
+        username = auth.get("username", "")
+        photo_url = auth.get("photo_url", "")
 
-        game.add_player(user_id, name, ws)
+        game.add_player(user_id, name, username, photo_url, ws)
 
-        # Отправка начального состояния
         await ws.send_json({
             "type": "init",
             "players": game.get_players_list(),
             "can_spin": game.can_spin()
         })
 
-        # Уведомление всех
         await broadcast({
             "type": "player_joined",
             "players": game.get_players_list()
         })
 
-        # Обработка команд
         while True:
             data = await ws.receive_json()
             action = data.get("action")
@@ -451,8 +614,18 @@ async def ws_endpoint(ws: WebSocket):
                     await broadcast({
                         "type": "spin_result",
                         "players": [
-                            {"id": pair[0], "name": game.players[pair[0]]["name"]},
-                            {"id": pair[1], "name": game.players[pair[1]]["name"]}
+                            {
+                                "id": pair[0],
+                                "name": game.players[pair[0]]["name"],
+                                "username": game.players[pair[0]]["username"],
+                                "photo": game.players[pair[0]]["photo"]
+                            },
+                            {
+                                "id": pair[1],
+                                "name": game.players[pair[1]]["name"],
+                                "username": game.players[pair[1]]["username"],
+                                "photo": game.players[pair[1]]["photo"]
+                            }
                         ]
                     })
 
